@@ -1,0 +1,53 @@
+name: Firmware checks
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  firmware:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Check out source
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          persist-credentials: false
+
+      - name: Run host regression tests
+        run: make -C tests check
+
+      - name: Install Arm GNU Toolchain 13.2.Rel1
+        run: |
+          archive="$RUNNER_TEMP/arm-gnu-toolchain.tar.xz"
+          curl --fail --location --silent --show-error --retry 3 \
+            https://armkeil.blob.core.windows.net/developer/Files/downloads/gnu/13.2.rel1/binrel/arm-gnu-toolchain-13.2.rel1-x86_64-arm-none-eabi.tar.xz \
+            --output "$archive"
+          echo "6cd1bbc1d9ae57312bcd169ae283153a9572bd6a8e4eeae2fedfbc33b115fdbb  $archive" \
+            | sha256sum --check
+          tar -xJf "$archive" -C "$RUNNER_TEMP"
+          echo "$RUNNER_TEMP/arm-gnu-toolchain-13.2.Rel1-x86_64-arm-none-eabi/bin" >> "$GITHUB_PATH"
+
+      - name: Build STM32H750 firmware
+        run: |
+          git clone --depth 1 --branch v9.0.0 --recurse-submodules --shallow-submodules \
+            https://github.com/daisyaudio/libDaisy.git libDaisy
+          test "$(git -C libDaisy rev-parse HEAD)" = 08087203debc646d3710ec8caa35bac6cf20ab5e
+          make -C libDaisy -j2
+          make -j2
+          arm-none-eabi-size build/daisy_delay.elf
+
+      - name: Upload flash binary
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: daisy-delay-firmware
+          path: build/daisy_delay.bin
+          if-no-files-found: error
